@@ -12,48 +12,65 @@
 #include <linux/version.h>
 
 #include <asm/errno.h>
+#include "finite_fields.h"
 
-/* Prototypes */
+/* прототипы методов интерфейса */
 
-static int device_open(struct inode*, struct file *);
+/* открывает файл устройства (если ещё не), инкрементирует open count */
+static int device_open(struct inode *, struct file *);
+
+/* вызывается когда процесс закрывает файл */
 static int device_release(struct inode *, struct file *);
+
+/* вызывается когдапроцесс читает из файла т.е при  read(dev/chardev...) */
 static ssize_t device_read(struct file *, char __user *, size_t, loff_t *);
+
+/* вызывается при записи в файл устройства т.е. при write(dev/chardev...) */
 static ssize_t device_write(struct file*, const char __user *, size_t, loff_t *);
 
 #define SUCCESS 0
 #define DEVICE_NAME "chardev"
-#define BUF_LEN 80/* Max length of the message from the device */
+#define BUF_LEN 80/* максимальная длина сообщения от драйвера */
 
-static int major; /* major number assigned to the device driver */
+static int major; /* major number драйвера */
+
+/* константы отображающие статус доступности девайса */
 enum {
 	CDEV_NOT_USED = 0,
 	CDEV_EXCLUSIVE_OPEN = 1,
 };
 
-/* avoid multiple acccess to the device */
+/* нужен для монопольного досупа
+ * нет необходимости обращаться к already_open из другого .c файла поэтому static */
 static atomic_t already_open = ATOMIC_INIT(CDEV_NOT_USED);
+
 static char msg[BUF_LEN + 1];
 
+/* нужен чтобы модуль был доступен из user space и добавлен в /dev /proс и т.д. при insmod
+ * и не пришлось делать ручками mknod */
 static struct class *cls;
 
 static struct file_operations chardev_fops = {
+    .owner = THIS_MODULE, /* https://stackoverflow.com/questions/1741415/linux-kernel-modules-when-to-use-try-module-get-module-put*/
 	.read = device_read,
 	.write = device_write,
 	.open = device_open,
 	.release = device_release,
 };
-/* init/exit */
+
+
+/* вызывается при insmod __init - подсказка компилятору */
 static int __init chardev_init(void)
 {
-	major = register_chrdev(0,DEVICE_NAME,&chardev_fops);
+	major = register_chrdev(0,DEVICE_NAME,&chardev_fops); // 0 -> возвращает доступнуй major для модуля
 
 	if(major < 0){
 		pr_alert("Registering char device failed with %d\n",major);
 		return major;
 	}
 
-	pr_info("I was assigned major number %d. \n",major)
-		;
+	pr_info("I was assigned major number %d. \n",major);
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
 	cls = class_create(DEVICE_NAME);
 #else
@@ -66,6 +83,7 @@ static int __init chardev_init(void)
 	return SUCCESS;
 }
 
+/* вызываается при rmmod */
 static void __exit chardev_exit(void)
 {
 	device_destroy(cls, MKDEV(major,0));
@@ -74,39 +92,36 @@ static void __exit chardev_exit(void)
 	/* Unregister device*/
 	unregister_chrdev(major, DEVICE_NAME);
 }
-
-/* Methods */
-
-/* Called when a process tries to open the device file,
- * like "sudo cat" /dev/chardev
- * */
-
 static int device_open(struct inode *inode, struct file * file)
 {
+    if (atomic_cmpxchg(&already_open, CDEV_NOT_USED, CDEV_EXCLUSIVE_OPEN))
+        return -EBUSY;
+    //TODO: инициализировать F_q(256) какой irreducible? пихнуть в глобальную переменную (?)
+    //с данными девайса
 
-	static int counter = 0;
-	if (atomic_cmpxchg(&already_open, CDEV_NOT_USED, CDEV_EXCLUSIVE_OPEN))
-		return -EBUSY;
-	sprintf(msg, "I alredy told you %d times Hello world!\n",counter ++);
-	try_module_get(THIS_MODULE);
+    //TODO: вроде как можно убрать т.к. .owner = THIS_MODULE проверить
+    try_module_get(THIS_MODULE); //increments the use count
 
-	return SUCCESS;
+    return SUCCESS;
 }
 
-/* Called whe a process closes the device file. */
 static int device_release(struct inode * inode, struct file * file)
 {
+    //TODO: видимо почистить всё что навыделяли
 	/* We're now ready for our next caller */
 	atomic_set(&already_open, CDEV_NOT_USED);
 	/* Decrement the usage count, or else once you opened the file, you will
 	 * never get rid of the module.
 	 */
-	module_put(THIS_MODULE);
+    //TODO: видимо тоже можно убрать т.к. .owner = THIS_MODULE проверить
+    module_put(THIS_MODULE);
 
 	return SUCCESS;
 }
 
 /* Called when a process, which already opened the dev file, attempts to read from it.*/
+//TODO: если все инициализируется и чистится как в open и close то просто разобраться как
+//работает предложенный алоритм и всё ок тогда
 
 static ssize_t device_read(struct file *filp, /* include linux/fs.h */
 			   char __user *buffer, /* buffer to fill with data*/
@@ -126,14 +141,13 @@ static ssize_t device_read(struct file *filp, /* include linux/fs.h */
 	/* Actually put the data into the buffer */
 	while (length && *msg_ptr){
 		/* The buffer is in the user data segment, not in the kernel
-		 * segment so "*" assignment won't work. We have to use put_user which copies data 
+		 * segment so "*" assignment won't work. We have to use put_user which copies data
 		 * from the kernel data segment to the user data segment.*/
 		put_user(*(msg_ptr++), buffer++);
 		length--;
 		bytes_read++;
 	}
 	*offset += bytes_read;
-	return bytes_read;
 
 	/* Most read function return the number of bytes put into the buffer. */
 	return bytes_read;
