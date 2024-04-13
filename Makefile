@@ -1,6 +1,6 @@
 obj-m += chardriver.o
 
-chardriver-objs := driver.o field_element.o finite_field.o polynom.o binary_field_extension.o
+chardriver-objs := driver.o field_element.o finite_field.o polynom.o binary_field_extension.o generator.o
 PWD := $(CURDIR)
 
 all:

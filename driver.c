@@ -10,45 +10,40 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
-
+#include <linux/kdev_t.h>
 #include <asm/errno.h>
+
+#include "generator.h"
 #include "finite_fields.h"
 
-/* прототипы методов интерфейса */
+/*
+ * insmod chardriver.ko
+ * ...
+ * fopen(chardev...);
+ * write(/dev/chardev, k, a_0, ... , a_k-1, x_0, ... x_k-1, c) - инициализировали начальные значения, теперь можно использовать
+ * read(/dev/chardev)
+ * ...
+ * fclose(/dev/chardev)
+ * ...
+ * rmmod chardriver
+ */
 
-/* открывает файл устройства (если ещё не), инкрементирует open count */
+
 static int device_open(struct inode *, struct file *);
-
-/* вызывается когда процесс закрывает файл */
 static int device_release(struct inode *, struct file *);
-
-/* вызывается когдапроцесс читает из файла т.е при  read(dev/chardev...) */
 static ssize_t device_read(struct file *, char __user *, size_t, loff_t *);
-
-/* вызывается при записи в файл устройства т.е. при write(dev/chardev...) */
-static ssize_t device_write(struct file*, const char __user *, size_t, loff_t *);
+static ssize_t device_write(struct file *, const char __user *, size_t, loff_t *);
 
 #define SUCCESS 0
 #define DEVICE_NAME "chardev"
-#define BUF_LEN 80/* максимальная длина сообщения от драйвера */
-
-static int major; /* major number драйвера */
-
-/* константы отображающие статус доступности девайса */
 enum {
 	CDEV_NOT_USED = 0,
 	CDEV_EXCLUSIVE_OPEN = 1,
 };
 
-/* нужен для монопольного досупа
- * нет необходимости обращаться к already_open из другого .c файла поэтому static */
 static atomic_t already_open = ATOMIC_INIT(CDEV_NOT_USED);
 
-static char msg[BUF_LEN + 1];
-
-/* нужен чтобы модуль был доступен из user space и добавлен в /dev /proс и т.д. при insmod
- * и не пришлось делать ручками mknod */
-static struct class *cls;
+struct class *cls;
 
 static struct file_operations chardev_fops = {
     .owner = THIS_MODULE, /* https://stackoverflow.com/questions/1741415/linux-kernel-modules-when-to-use-try-module-get-module-put*/
@@ -58,107 +53,115 @@ static struct file_operations chardev_fops = {
 	.release = device_release,
 };
 
+static struct cdev my_cdev;
+static dev_t dev_num;
 
-/* вызывается при insmod __init - подсказка компилятору */
-static int __init chardev_init(void)
+//TODO: скрипт для инсерта ?
+
+static int __init register_module(void)
 {
-	major = register_chrdev(0,DEVICE_NAME,&chardev_fops); // 0 -> возвращает доступнуй major для модуля
+    if(alloc_chrdev_region(&dev_num, 0, 1, DEVICE_NAME) < 0)
+        goto fail;
 
-	if(major < 0){
-		pr_alert("Registering char device failed with %d\n",major);
-		return major;
-	}
+    cdev_init(&my_cdev, &chardev_fops);
+    my_cdev.owner = THIS_MODULE;
+    my_cdev.ops = &chardev_fops;
 
-	pr_info("I was assigned major number %d. \n",major);
+    if(cdev_add(&my_cdev, dev_num, 1) < 0)
+        goto unregister;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
-	cls = class_create(DEVICE_NAME);
+    pr_info("I was assigned major number %d and minor number %d. \n", MAJOR(dev_num), MINOR(dev_num));
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+    cls = class_create(DEVICE_NAME);
 #else
-	cls = class_create(THIS_MODULE, DEVICE_NAME);
+    cls = class_create(THIS_MODULE, DEVICE_NAME);
 #endif
-	device_create(cls, NULL, MKDEV(major,0), NULL, DEVICE_NAME);
+    device_create(cls, NULL, dev_num, NULL, DEVICE_NAME); //TODO: второй NULL drvdata - возможно стоит хранить device_data в нём
 
-	pr_info("Device created on /dev/%s\n",DEVICE_NAME);
+    pr_info("Device created on /dev/%s\n", DEVICE_NAME);
+    return SUCCESS;
 
-	return SUCCESS;
+unregister:
+    unregister_chrdev_region(dev_num, 1);
+fail:
+    pr_alert("Registering char device failed");
+    return -1;
 }
 
-/* вызываается при rmmod */
-static void __exit chardev_exit(void)
+/* вызывается при rmmod */
+static void __exit unregister_module(void)
 {
-	device_destroy(cls, MKDEV(major,0));
-	class_destroy(cls);
-
-	/* Unregister device*/
-	unregister_chrdev(major, DEVICE_NAME);
+    device_destroy(cls, dev_num);
+    class_destroy(cls);
+    cdev_del(&my_cdev);
+	unregister_chrdev_region(dev_num, 1);
+    pr_info("removed module\n");
 }
-static int device_open(struct inode *inode, struct file * file)
+
+
+static int device_open(struct inode *inode, struct file *file)
 {
     if (atomic_cmpxchg(&already_open, CDEV_NOT_USED, CDEV_EXCLUSIVE_OPEN))
         return -EBUSY;
-    //TODO: инициализировать F_q(256) какой irreducible? пихнуть в глобальную переменную (?)
-    //с данными девайса
 
-    //TODO: вроде как можно убрать т.к. .owner = THIS_MODULE проверить
-    try_module_get(THIS_MODULE); //increments the use count
+    struct generator *gen = kmalloc(sizeof(struct generator), GFP_KERNEL);
+
+    if(gen == NULL || setup_generator(gen) < 0) {
+        return -ENOMEM;
+    }
+
+    file->private_data = gen;
 
     return SUCCESS;
 }
 
-static int device_release(struct inode * inode, struct file * file)
-{
-    //TODO: видимо почистить всё что навыделяли
-	/* We're now ready for our next caller */
-	atomic_set(&already_open, CDEV_NOT_USED);
-	/* Decrement the usage count, or else once you opened the file, you will
-	 * never get rid of the module.
-	 */
-    //TODO: видимо тоже можно убрать т.к. .owner = THIS_MODULE проверить
-    module_put(THIS_MODULE);
 
+static int device_release(struct inode *inode, struct file *file)
+{
+    struct generator *gen = (struct generator *) file->private_data;
+    free_generator(gen);
+	atomic_set(&already_open, CDEV_NOT_USED);
 	return SUCCESS;
 }
 
-/* Called when a process, which already opened the dev file, attempts to read from it.*/
-//TODO: если все инициализируется и чистится как в open и close то просто разобраться как
-//работает предложенный алоритм и всё ок тогда
 
-static ssize_t device_read(struct file *filp, /* include linux/fs.h */
+static ssize_t device_read(struct file *file, /* include linux/fs.h */
 			   char __user *buffer, /* buffer to fill with data*/
 			   size_t length, /* length of the buffer */
 			   loff_t *offset)
 {
-	/* Number of bytes actually written to the buffer */
+
+    struct generator *gen = (struct generator *) file->private_data;;
 	int bytes_read = 0;
-	const char *msg_ptr = msg;
+    for(size_t n = 0; n < length; n++){
+        /* пишем в пользовательский буфер */
+        uint8_t target;
 
-	if(!*msg_ptr + *offset){ /* we are at the end of the message*/
-		*offset = 0;
-		return 0;
-	}
+        if(get_random(gen, &target) < 0){
+            return -1;
+        }
 
-	msg_ptr += *offset;
-	/* Actually put the data into the buffer */
-	while (length && *msg_ptr){
-		/* The buffer is in the user data segment, not in the kernel
-		 * segment so "*" assignment won't work. We have to use put_user which copies data
-		 * from the kernel data segment to the user data segment.*/
-		put_user(*(msg_ptr++), buffer++);
-		length--;
-		bytes_read++;
-	}
-	*offset += bytes_read;
+        put_user(target, buffer++);
+        bytes_read++;
+    }
 
-	/* Most read function return the number of bytes put into the buffer. */
 	return bytes_read;
 }
-static ssize_t device_write(struct file *filp, const char __user *buff,
+
+static ssize_t device_write(struct file *file, const char __user *buff,
 			    size_t len, loff_t *off)
 {
-	pr_alert("Sorry this operation is not supported.\n");
-	return -EINVAL;
+
+	struct generator *gen = (struct generator *) file->private_data;
+    if(gen == NULL || init_random(gen, buff, len) < 0){
+        return -1;
+    }
+
+    return len;
 }
-module_init(chardev_init);
-module_exit(chardev_exit);
+
+module_init(register_module);
+module_exit(unregister_module);
 
 MODULE_LICENSE("GPL");
