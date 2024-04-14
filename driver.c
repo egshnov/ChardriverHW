@@ -100,10 +100,11 @@ static void __exit unregister_module(void)
 
 static int device_open(struct inode *inode, struct file *file)
 {
+    struct generator *gen;
     if (atomic_cmpxchg(&already_open, CDEV_NOT_USED, CDEV_EXCLUSIVE_OPEN))
         return -EBUSY;
 
-    struct generator *gen = (struct generator*) kzalloc(sizeof(struct generator), GFP_KERNEL);
+    gen = (struct generator*) kzalloc(sizeof(struct generator), GFP_KERNEL);
 
     if(gen == NULL || setup_generator(gen) < 0) {
         return -ENOMEM;
@@ -129,8 +130,9 @@ static ssize_t device_read(struct file *file, /* include linux/fs.h */
 			   size_t length, /* length of the buffer */
 			   loff_t *offset)
 {
+    int bytes_read;
     struct generator *gen = (struct generator *) file->private_data;;
-	int bytes_read = 0;
+	bytes_read = 0;
     for(size_t n = 0; n < length; n++){
         /* пишем в пользовательский буфер */
         uint8_t target;

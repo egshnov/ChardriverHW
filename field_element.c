@@ -93,10 +93,12 @@ void FreeElement(FieldElement elem) {
 
 //returns NULL if ERROR occurred
 FieldElement Add(FieldElement lhs, FieldElement rhs) {
+    FieldElement res;
     if (!InSameField(lhs, rhs)) {
         return NULL;
     }
-    FieldElement res = init(lhs->field);
+
+    res = init(lhs->field);
     if (res == NULL) return NULL;
     res->pol = AddPolynom(lhs->pol, rhs->pol);
     if (res->pol == NULL) {
@@ -107,10 +109,11 @@ FieldElement Add(FieldElement lhs, FieldElement rhs) {
 }
 
 FieldElement Mult(FieldElement lhs, FieldElement rhs) {
+    FieldElement res;
     if (!InSameField(lhs, rhs)) {
         return NULL;
     }
-    FieldElement res = init(lhs->field);
+    res = init(lhs->field);
     if (res == NULL) return NULL;
     res->pol = MultPolynom(lhs->pol, rhs->pol);
     if (res->pol == NULL) {
@@ -124,9 +127,10 @@ FieldElement Mult(FieldElement lhs, FieldElement rhs) {
 }
 
 static int int_fast_pow(int val, int pow) {
+    int result;
     if (val == 0) return 0;
     if (val == 1) return 1;
-    int result = 1;
+    result = 1;
     while (pow > 0) {
         if (pow % 2 == 1) {
             result *= val;
@@ -139,14 +143,15 @@ static int int_fast_pow(int val, int pow) {
 
 //p > 0
 static FieldElement element_fast_pow(FieldElement elem, unsigned int p) {
+    FieldElement res, dummy, value;
     if (IsZeroPolynom(elem->pol)) {
         return GetZero(elem->field);
     }
     if (IsIdentityPolynom(elem->pol)) {
         return GetIdentity(elem->field);
     }
-    FieldElement res = GetIdentity(elem->field);
-    FieldElement value = Copy(elem);
+    res = GetIdentity(elem->field);
+    value = Copy(elem);
     if (res == NULL || value == NULL) {
         FreeElement(res);
         FreeElement(value);
@@ -159,7 +164,7 @@ static FieldElement element_fast_pow(FieldElement elem, unsigned int p) {
             FreeElement(dummy);
             if (res == NULL) return NULL;
         }
-        FieldElement dummy = value;
+        dummy = value;
         value = Mult(value, value);
         FreeElement(dummy);
         if (value == NULL) return NULL;
@@ -170,8 +175,9 @@ static FieldElement element_fast_pow(FieldElement elem, unsigned int p) {
 }
 
 FieldElement Inv(FieldElement element) {
+    uint64_t pn;
     if (IsZero(element)) return NULL;
-    uint64_t pn = element->field->pol == NULL ? element->field->p - 1 : int_fast_pow(element->field->p,
+    pn = element->field->pol == NULL ? element->field->p - 1 : int_fast_pow(element->field->p,
                                                                                      PolynomDeg(element->field->pol));
     return element_fast_pow(element, pn - 2);
 }
@@ -187,10 +193,11 @@ FieldElement Pow(FieldElement elem, int p) {
 }
 
 FieldElement Division(FieldElement lhs, FieldElement rhs) {
+    FieldElement tmp, res;
     if (IsZeroPolynom(rhs->pol)) return NULL;
-    FieldElement tmp = Inv(rhs);
+    tmp = Inv(rhs);
     if (tmp == NULL) return NULL;
-    FieldElement res = Mult(lhs, tmp);
+    res = Mult(lhs, tmp);
     FreeElement(tmp);
     return res;
 }
