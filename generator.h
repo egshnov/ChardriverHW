@@ -1,7 +1,6 @@
 #ifndef DRIVER_GENERATOR_H
 #define DRIVER_GENERATOR_H
 #include "finite_fields.h"
-//TODO: k must be size_t ? если так то надо переделывать интерфейс
 
 struct generator {
     uint8_t k;
@@ -9,7 +8,6 @@ struct generator {
     FieldElement *x_i;
     FieldElement c;
     FiniteField field;
-
 };
 
 int setup_generator(struct generator *gen);

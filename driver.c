@@ -56,8 +56,6 @@ static struct file_operations chardev_fops = {
 static struct cdev my_cdev;
 static dev_t dev_num;
 
-//TODO: скрипт для инсерта ?
-
 static int __init register_module(void)
 {
     if(alloc_chrdev_region(&dev_num, 0, 1, DEVICE_NAME) < 0)
@@ -77,7 +75,7 @@ static int __init register_module(void)
 #else
     cls = class_create(THIS_MODULE, DEVICE_NAME);
 #endif
-    device_create(cls, NULL, dev_num, NULL, DEVICE_NAME); //TODO: второй NULL drvdata - возможно стоит хранить device_data в нём
+    device_create(cls, NULL, dev_num, NULL, DEVICE_NAME);
 
     pr_info("Device created on /dev/%s\n", DEVICE_NAME);
     return SUCCESS;
@@ -105,7 +103,7 @@ static int device_open(struct inode *inode, struct file *file)
     if (atomic_cmpxchg(&already_open, CDEV_NOT_USED, CDEV_EXCLUSIVE_OPEN))
         return -EBUSY;
 
-    struct generator *gen = kmalloc(sizeof(struct generator), GFP_KERNEL);
+    struct generator *gen = (struct generator*) kzalloc(sizeof(struct generator), GFP_KERNEL);
 
     if(gen == NULL || setup_generator(gen) < 0) {
         return -ENOMEM;
@@ -131,17 +129,14 @@ static ssize_t device_read(struct file *file, /* include linux/fs.h */
 			   size_t length, /* length of the buffer */
 			   loff_t *offset)
 {
-
     struct generator *gen = (struct generator *) file->private_data;;
 	int bytes_read = 0;
     for(size_t n = 0; n < length; n++){
         /* пишем в пользовательский буфер */
         uint8_t target;
-
         if(get_random(gen, &target) < 0){
             return -1;
         }
-
         put_user(target, buffer++);
         bytes_read++;
     }
@@ -152,12 +147,10 @@ static ssize_t device_read(struct file *file, /* include linux/fs.h */
 static ssize_t device_write(struct file *file, const char __user *buff,
 			    size_t len, loff_t *off)
 {
-
 	struct generator *gen = (struct generator *) file->private_data;
     if(gen == NULL || init_random(gen, buff, len) < 0){
         return -1;
     }
-
     return len;
 }
 
