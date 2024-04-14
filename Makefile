@@ -4,6 +4,6 @@ chardriver-objs := driver.o field_element.o finite_field.o polynom.o binary_fiel
 PWD := $(CURDIR)
 
 all:
-	make -C ~/vm/kernel  M=$(PWD) modules
+	make -C /lib/modules/$(shell uname -r)/build   M=$(PWD) modules
 clean:
-	make -C ~/vm/kernel  M=$(PWD) clean
+	make -C /lib/modules/$(shell uname -r)/build   M=$(PWD) clean
